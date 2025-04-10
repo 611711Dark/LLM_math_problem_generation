@@ -220,7 +220,7 @@ async def create_question(request: QuestionRequest):
                     difficulty=request.difficulty,
                     domain=request.domain,
                     content="计算表达式 2(3x - 4) + 5x 的值，其中 x = 3",
-                    answer="17",
+                    answer="25",
                     explanation="将 x = 3 代入表达式：2(3 × 3 - 4) + 5 × 3 = 2(9 - 4) + 15 = 2 × 5 + 15 = 10 + 15 = 25"
                 )
             elif request.domain == MathDomain.GEOMETRY:
@@ -250,7 +250,7 @@ async def create_question(request: QuestionRequest):
                     difficulty=request.difficulty,
                     domain=request.domain,
                     content="计算函数 f(x) = x³ - 3x² + 2x 在区间 [0, 2] 上的定积分。",
-                    answer="-2",
+                    answer="0",
                     explanation="计算定积分：\n∫₂₀ (x³ - 3x² + 2x) dx = [x⁴/4 - 3x³/3 + 2x²/2]₂₀\n= (2⁴/4 - 3×2³/3 + 2×2²/2) - (0⁴/4 - 3×0³/3 + 2×0²/2)\n= (16/4 - 24/3 + 8/2) - 0\n= 4 - 8 + 4\n= 0"
                 )
             else:  # 概率统计
@@ -260,8 +260,8 @@ async def create_question(request: QuestionRequest):
                     difficulty=request.difficulty,
                     domain=request.domain,
                     content="一个箱子里有3个红球和5个蓝球。如果随机抽取2个球，计算抽到两个红球的概率。",
-                    answer="1/7",
-                    explanation="总共有8个球，从中抽取2个球的组合数是 C(8,2) = 28。\n从3个红球中抽取2个球的组合数是 C(3,2) = 3。\n因此抽到两个红球的概率是 3/28 = 3/28 = 1/7。"
+                    answer="3/28",
+                    explanation="总共有8个球，从中抽取2个球的组合数是 C(8,2) = 28。\n从3个红球中抽取2个球的组合数是 C(3,2) = 3。\n因此抽到两个红球的概率是 3/28。"
                 )
 
         try:

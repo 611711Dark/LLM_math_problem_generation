@@ -98,28 +98,6 @@ from app.models import (
 import re
 
 def calculate_expression(expression: str) -> str:
-    """
-    calculate mathematical expressions using the `sympify` function from `sympy`, parse and compute the input mathematical expression string, supports direct calls to SymPy functions (automatically recognizes x, y, z as symbolic variables)
-    Parameters:
-        expression (str): Mathematical expression, e.g., "223 - 344 * 6" or "sin(pi/2) + log(10)".Replace special symbols with approximate values, e.g., pi → 3.1415"
-    Example expressions:
-        "2 + 3*5"                          # Basic arithmetic → 17
-        "expand((x + 1)**2)"               # Expand → x² + 2x + 1
-        "diff(sin(x), x)"                  # Derivative → cos(x)
-        "integrate(exp(x), (x, 0, 1))"      # Definite integral → E - 1
-        "solve(x**2 - 4, x)"               # Solve equation → [-2, 2]
-        "limit(tan(x)/x, x, 0)"            # Limit → 1
-        "Sum(k, (k, 1, 10)).doit()"        # Summation → 55
-        "Matrix([[1, 2], [3, 4]]).inv()"   # Matrix inverse → [[-2, 1], [3/2, -1/2]]
-        "simplify((x**2 - 1)/(x + 1))"     # Simplify → x - 1
-        "factor(x**2 - 2*x - 15)"          # Factorize → (x - 5)(x + 3)
-        "series(cos(x), x, 0, 4)"          # Taylor series → 1 - x²/2 + x⁴/24 + O(x⁴)
-        "integrate(exp(-x**2)*sin(x), (x, -oo, oo))"  # Complex integral
-        "solve([x**2 + y**2 - 1, x + y - 1], [x, y])"  # Solve system of equations
-        "Matrix([[1, 2, 3], [4, 5, 6], [7, 8, 9]]).eigenvals()"  # Matrix eigenvalues
-    Returns:
-        str: Calculation result. If the expression cannot be parsed or computed, returns an error message (str).
-    """
     try:
         # 去除表达式两端的引号，如果有的话
         expression = expression.strip()
@@ -582,7 +560,7 @@ class QuestionGenerator:
         agent_prompt = """
         你是一个专业的数学教师，请生成一道{domain}领域的{difficulty}难度的{question_type}。
 
-        请使用中文生成问题、选项和解析，不要使用英文。
+        请使用中文生成问题和解析，不要使用英文。如果是选择题，请生成选项；如果是填空题或计算题，不要生成选项。
 
         请生成原创的、有趣的、多样化的问题。不要生成简单的“2x + 3 = 7”这类基础问题。根据难度级别，生成相应复杂度的问题。
 
@@ -615,14 +593,17 @@ class QuestionGenerator:
             "explanation": "详细解析（中文）"
         }}
 
-        如果是填空题或计算题，请生成以下格式的JSON：
+        如果是填空题或计算题，请生成以下格式的JSON（注意：填空题和计算题不需要生成选项，不要包含options字段）：
         {{
             "content": "问题内容（中文）",
             "answer": "正确答案",
             "explanation": "详细解析（中文）"
         }}
 
-        如果需要计算，请使用数学工具来计算答案。在使用计算工具时，请仔细检查输入格式，确保输入的表达式是正确的。
+        在生成问题时，请确保问题的答案是正确的。对于较为复杂的数学问题，请仔细检查计算过程，确保答案的准确性。这尤其适用于极限、导数、积分、方程求解等复杂计算。
+
+        在使用计算工具时，请仔细检查输入格式，确保输入的表达式是正确的。如果计算结果与你的预期不符，请重新检查计算过程。
+
         输出必须是有效的JSON格式。
         再次强调，请使用中文生成所有内容。
 
@@ -757,7 +738,8 @@ class QuestionGenerator:
             # 检查是否有answer字段，如果没有，尝试使用correct_answer字段
             answer = question_data.get("answer", question_data.get("correct_answer", ""))
 
-            if question_type == QuestionType.MULTIPLE_CHOICE:
+            # 检查是否有options字段，如果有，则可能是选择题
+            if "options" in question_data and question_type == QuestionType.MULTIPLE_CHOICE:
                 # 处理选项格式
                 options_data = question_data.get("options", [])
                 options = []
@@ -791,6 +773,19 @@ class QuestionGenerator:
                         Option(id="D", content="选项D")
                     ]
 
+                # 检查选项中是否包含答案
+                answer_valid = False
+                for opt in options:
+                    if opt.id.upper() == answer.upper():
+                        answer_valid = True
+                        break
+
+                if not answer_valid:
+                    print(f"\n警告：答案 {answer} 不在选项中\n")
+                    # 将答案设置为第一个选项
+                    answer = options[0].id
+
+                # 选择题需要返回选项
                 return MultipleChoiceQuestion(
                     id=question_id,
                     type=question_type,
@@ -801,8 +796,26 @@ class QuestionGenerator:
                     answer=answer,
                     explanation=explanation
                 )
-
+            elif question_type == QuestionType.MULTIPLE_CHOICE:
+                # 如果是选择题但没有options字段，创建默认选项
+                options = [
+                    Option(id="A", content="选项A"),
+                    Option(id="B", content="选项B"),
+                    Option(id="C", content="选项C"),
+                    Option(id="D", content="选项D")
+                ]
+                return MultipleChoiceQuestion(
+                    id=question_id,
+                    type=question_type,
+                    difficulty=difficulty,
+                    domain=domain,
+                    content=content,
+                    options=options,
+                    answer="A",  # 默认答案
+                    explanation=explanation
+                )
             elif question_type == QuestionType.FILL_IN_BLANK:
+                # 填空题不需要选项
                 return FillInBlankQuestion(
                     id=question_id,
                     type=question_type,
@@ -812,8 +825,8 @@ class QuestionGenerator:
                     answer=answer,
                     explanation=explanation
                 )
-
             else:  # 计算题
+                # 计算题不需要选项
                 return CalculationQuestion(
                     id=question_id,
                     type=question_type,

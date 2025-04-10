@@ -2,7 +2,7 @@
 
 English | [中文](README.md)
 
-This is a web application that uses LLM (Large Language Model) to generate math problems, supporting multiple-choice, fill-in-the-blank, and calculation questions, and providing AI feedback. The system generates questions and feedback in Chinese, suitable for Chinese-speaking users learning mathematics.
+This is a web application that uses LLM (Large Language Model) to generate math problems, supporting multiple-choice, fill-in-the-blank, and calculation questions, and providing AI feedback. The system generates questions and feedback in Chinese, suitable for Chinese-speaking users learning mathematics. The system supports LaTeX format for mathematical formulas, providing clear and beautiful mathematical expression display.
 
 ## Screenshots
 
@@ -24,6 +24,9 @@ This is a web application that uses LLM (Large Language Model) to generate math 
 - Integrates powerful mathematical calculation tools, supporting complex expression calculations
 - Intelligent error handling, capable of fixing common mathematical expression input errors
 - Generates different random questions each time, providing diverse practice content
+- Supports LaTeX format for mathematical formulas, rendered by KaTeX, providing clear and beautiful mathematical expression display
+- Simplified JSON parsing logic, improving system stability and efficiency
+- Optimized calculation tool usage, reducing unnecessary calculation calls
 
 ## Tech Stack
 
@@ -123,13 +126,20 @@ math_questions/
 
 3. **Chinese Feedback**: The system provides detailed Chinese feedback and explanations, helping users better understand the problems.
 
+4. **LaTeX Mathematical Formula Support**: The system uses LaTeX format for mathematical formulas in questions and feedback, such as $f(x) = x^2$ and $\frac{1}{2}$, providing clear and beautiful mathematical expression display.
+
+5. **Intelligent Calculation Tool Usage**: The system intelligently determines when to use calculation tools, avoiding using tools for simple calculations, improving efficiency.
+
+6. **Simplified JSON Parsing**: Uses direct text extraction instead of JSON parsing, improving system stability and efficiency.
+
 ## Notes
 
-- DeepSeek API is used by default, configured in config.py
+- DeepSeek API is used by default, configured in config.py, with the API key read from the DEEPSEEK_API_KEY environment variable
 - Generating questions and feedback may take some time, please be patient
-- Mathematical formulas use LaTeX format, rendered by KaTeX
-- Uses StructuredTool and LangChain agents for mathematical calculations
+- Mathematical formulas use LaTeX format, rendered by KaTeX, supporting various complex mathematical expressions
+- Uses LangChain for mathematical calculations, optimized to only use tools for complex calculations
 - Integrates advanced mathematical calculation tools, supporting complex expression calculations, infinite integrals, matrix operations, etc.
+- The system uses direct text extraction instead of JSON parsing, improving stability
 - If you encounter problems, you can check the console logs for details
 
 ## Contributing
