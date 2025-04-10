@@ -285,21 +285,60 @@ async def create_question(request: QuestionRequest):
             import json
 
             # 尝试从错误信息中提取JSON
-            # 直接提取完整的JSON字符串
-            # 首先尝试提取完整的JSON对象
-            full_json_match = re.search(r'`([^`]*\{[\s\S]*\}[^`]*)`', error_str)
-            if full_json_match:
-                # 如果找到了完整的JSON字符串，直接使用它
-                json_str = full_json_match.group(1).strip()
-                # 删除可能的反引号
-                json_str = json_str.replace('`', '')
-                # 删除可能的"json"标记
-                json_str = re.sub(r'^json\s*', '', json_str)
+            # 先尝试提取第一个完整的JSON对象
+            json_patterns = [
+                r'`([^`]*\{[\s\S]*?\}[^`]*)`',  # 反引号内的JSON
+                r'```+json\s*\n(.+?)\n\s*```+',  # Markdown代码块格式
+                r'````json\s*\n(.+?)\n\s*````',  # 四个反引号
+                r'\{\s*"content":[\s\S]+?\}',  # 直接匹配包含content字段的JSON对象
+                r'\{[\s\S]+?\}'  # 匹配任何JSON对象
+            ]
+
+            json_str = None
+            for pattern in json_patterns:
+                match = re.search(pattern, error_str)
+                if match:
+                    if len(match.groups()) > 0:
+                        # 如果有捕获组，使用第一个捕获组
+                        json_str = match.group(1).strip()
+                    else:
+                        # 否则使用整个匹配
+                        json_str = match.group(0).strip()
+
+                    # 如果找到了完整的JSON字符串，处理它
+                    # 删除可能的反引号
+                    json_str = json_str.replace('`', '')
+                    # 删除可能的"json"标记
+                    json_str = re.sub(r'^json\s*', '', json_str)
+                    # 删除可能的注释和其他非JSON内容
+                    json_str = re.sub(r'\n\s*\(.+?\)\s*\n', '\n', json_str)
+
+                    # 尝试找到第一个有效的JSON对象
+                    try:
+                        # 尝试解析JSON
+                        json.loads(json_str)
+                        # 如果成功，跳出循环
+                        break
+                    except json.JSONDecodeError:
+                        # 如果解析失败，继续尝试下一个模式
+                        json_str = None
+                        continue
+
+            # 如果找到了有效的JSON字符串
+            if json_str:
 
                 print(f"\n从错误信息中提取的完整JSON: {json_str}\n")
 
                 try:
                     # 尝试解析完整的JSON
+                    # 先尝试清理JSON字符串
+                    # 删除可能的注释和其他非JSON内容
+                    json_str = re.sub(r'\n\s*\(.+?\)\s*\n', '\n', json_str)
+                    # 删除可能的修正版题目部分
+                    json_str = re.sub(r'\n\s*\(注：.+?\)\s*\n', '\n', json_str)
+                    json_str = re.sub(r'\n\s*修正版题目.+', '', json_str, flags=re.DOTALL)
+
+                    # 尝试解析JSON
                     extracted_data = json.loads(json_str)
                     print(f"\n成功解析完整JSON: {extracted_data}\n")
 
@@ -324,19 +363,29 @@ async def create_question(request: QuestionRequest):
 
                             # 如果成功提取了选项，创建选择题
                             if options and content and answer:
-                                custom_question = MultipleChoiceQuestion(
-                                    id=question_id,
-                                    type=request.type,
-                                    difficulty=request.difficulty,
-                                    domain=request.domain,
-                                    content=content,
-                                    options=options,
-                                    answer=answer,
-                                    explanation=explanation
-                                )
+                                # 验证答案是否在选项中
+                                answer_valid = False
+                                for opt in options:
+                                    if opt.id == answer:
+                                        answer_valid = True
+                                        break
 
-                                questions_db[custom_question.id] = custom_question
-                                return custom_question
+                                if not answer_valid:
+                                    print(f"\n警告：答案 {answer} 不在选项中，使用默认问题\n")
+                                else:
+                                    custom_question = MultipleChoiceQuestion(
+                                        id=question_id,
+                                        type=request.type,
+                                        difficulty=request.difficulty,
+                                        domain=request.domain,
+                                        content=content,
+                                        options=options,
+                                        answer=answer,
+                                        explanation=explanation
+                                    )
+
+                                    questions_db[custom_question.id] = custom_question
+                                    return custom_question
 
                         elif (request.type == QuestionType.FILL_IN_BLANK or request.type == QuestionType.CALCULATION) and content and answer:
                             # 创建填空题或计算题
@@ -365,6 +414,39 @@ async def create_question(request: QuestionRequest):
                             return custom_question
                 except json.JSONDecodeError as e:
                     print(f"\n解析完整JSON失败: {e}\n")
+
+                    # 尝试修复JSON字符串并重新解析
+                    try:
+                        # 尝试删除可能的干扰字符
+                        cleaned_str = re.sub(r'[\n\r\t]', '', json_str)
+                        # 尝试修复常见的JSON错误
+                        cleaned_str = cleaned_str.replace("'", '"')
+
+                        # 尝试删除可能的注释和其他非JSON内容
+                        cleaned_str = re.sub(r'\(\u6ce8：.+?\)', '', cleaned_str)
+                        cleaned_str = re.sub(r'修正版题目.+', '', cleaned_str)
+
+                        # 尝试提取第一个有效的JSON对象
+                        json_obj_match = re.search(r'\{.+?\}', cleaned_str, re.DOTALL)
+                        if json_obj_match:
+                            cleaned_str = json_obj_match.group(0)
+
+                        # 尝试解析清理后的字符串
+                        extracted_data = json.loads(cleaned_str)
+                        print(f"\n成功解析清理后的JSON: {extracted_data}\n")
+
+                        # 如果成功解析了JSON，直接使用它来创建问题
+                        if extracted_data and isinstance(extracted_data, dict):
+                            print("\n使用清理后的JSON数据创建问题\n")
+
+                            # 提取必要的字段
+                            content = extracted_data.get("content", "")
+                            answer = extracted_data.get("answer", "")
+                            explanation = extracted_data.get("explanation", "")
+
+                            # 继续处理...
+                    except Exception as clean_e:
+                        print(f"\n清理后的JSON解析仍然失败: {clean_e}\n")
 
             # 如果无法从错误信息中提取完整的JSON，尝试其他方法
             # 这里我们直接使用默认问题

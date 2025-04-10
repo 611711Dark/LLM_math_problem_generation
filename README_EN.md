@@ -4,6 +4,16 @@ English | [中文](README.md)
 
 This is a web application that uses LLM (Large Language Model) to generate math problems, supporting multiple-choice, fill-in-the-blank, and calculation questions, and providing AI feedback. The system generates questions and feedback in Chinese, suitable for Chinese-speaking users learning mathematics.
 
+## Screenshots
+
+### Question Page
+
+![Page_effect](Page_effect.png)
+
+### Answer Feedback
+
+![Answer_effect](Answer_effect.png)
+
 ## Features
 
 - Uses LLM to generate formatted math problems with Chinese output
@@ -44,7 +54,7 @@ This is a web application that uses LLM (Large Language Model) to generate math 
    ```bash
    # Linux/Mac
    export DEEPSEEK_API_KEY="your-api-key"
-   
+
    # Windows
    set DEEPSEEK_API_KEY=your-api-key
    ```

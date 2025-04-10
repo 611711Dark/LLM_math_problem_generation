@@ -17,6 +17,35 @@ def preprocess_expression(expression):
     Returns:
         str: 预处理后的表达式
     """
+    # 检查表达式是否包含自然语言描述
+    # 如果包含中文字符，则删除中文部分
+    if re.search(r'[一-鿿]', expression):
+        clean_expr = re.sub(r'[一-鿿]+', '', expression)
+        # 如果删除中文后表达式不为空，则使用清理后的表达式
+        if clean_expr.strip():
+            expression = clean_expr
+
+    # 检查表达式是否包含常见的数学函数调用
+    # 如果是，确保括号匹配
+    if re.search(r'(solve|diff|integrate|limit)\s*\(', expression):
+        # 检查括号是否匹配
+        open_brackets = expression.count('(')
+        close_brackets = expression.count(')')
+
+        # 如果括号不匹配，添加缺失的括号
+        if open_brackets > close_brackets:
+            expression += ')' * (open_brackets - close_brackets)
+
+        # 确保函数调用的参数完整
+        for func in ['solve', 'diff', 'integrate', 'limit']:
+            pattern = f'{func}\s*\(([^\)]*)'  # 匹配函数调用及其参数
+            matches = re.findall(pattern, expression)
+            for match in matches:
+                # 如果参数中有逗号但没有第二个参数，添加第二个参数
+                if ',' in match and not re.search(r',\s*[a-zA-Z]', match):
+                    # 假设缺失的是变量参数
+                    expression = expression.replace(f'{func}({match})', f'{func}({match}, x)')
+
     # 替换中文括号为英文括号
     expression = expression.replace('（', '(').replace('）', ')')
 
@@ -100,7 +129,31 @@ def calculate_expression(expression: str) -> str:
 
         # 预处理表达式，修复常见错误
         expression = preprocess_expression(expression)
-        print(f"\n预处理后的表达式: {expression}\n")
+
+        # 检查表达式是否以引号结尾，如果是，删除它
+        if expression.endswith('"'):
+            expression = expression[:-1]
+
+        print(f"\n最终处理后的表达式: {expression}\n")
+
+        # 如果表达式中包含函数调用，确保括号匹配
+        if any(func in expression for func in ['diff', 'solve', 'integrate', 'limit']):
+            # 检查括号是否匹配
+            open_brackets = expression.count('(')
+            close_brackets = expression.count(')')
+
+            # 如果括号不匹配，添加缺失的括号
+            if open_brackets > close_brackets:
+                expression += ')' * (open_brackets - close_brackets)
+
+            # 如果是求导函数，确保参数完整
+            if 'diff(' in expression and ',' not in expression:
+                # 如果没有指定变量，默认对x求导
+                expression = expression.replace('diff(', 'diff(', 1)
+                # 在最后一个括号前添加变量
+                last_bracket_index = expression.rfind(')')
+                if last_bracket_index != -1:
+                    expression = expression[:last_bracket_index] + ', x' + expression[last_bracket_index:]
 
         # Define common symbolic variables
         x, y, z = sp.symbols('x y z')
@@ -529,6 +582,8 @@ class QuestionGenerator:
         请生成原创的、有趣的、多样化的问题。不要生成简单的“2x + 3 = 7”这类基础问题。根据难度级别，生成相应复杂度的问题。
 
         这是随机种子 {seed}，请使用它来生成不同的问题。
+
+        非常重要：对于选择题，请确保正确答案在选项中。如果你计算出的答案不在选项中，请重新生成选项或调整问题。不要生成有陷阱的问题。
 
         如果是选择题，请生成以下格式的JSON：
         {{

@@ -2,6 +2,7 @@
 反馈生成模块，使用LLM评估用户回答并生成反馈
 """
 import json
+import re
 import sympy as sp
 from typing import Dict, Any
 
@@ -13,7 +14,7 @@ from langchain.agents import initialize_agent
 from app.config import settings
 from app.models import (
     Question, MultipleChoiceQuestion, FillInBlankQuestion,
-    CalculationQuestion, Feedback, UserAnswer
+    CalculationQuestion, Feedback, UserAnswer, QuestionType
 )
 
 class FeedbackGenerator:
@@ -94,17 +95,26 @@ class FeedbackGenerator:
         # 生成提示
         prompt = self.feedback_template.format_messages(**prompt_args)
 
+        # 获取选项内容，如果是选择题
+        options_info = ""
+        if question.type == QuestionType.MULTIPLE_CHOICE and hasattr(question, 'options'):
+            options_info = "\n        选项信息:\n"
+            for option in question.options:
+                options_info += f"        {option.id}: {option.content}\n"
+
         # 使用代理生成反馈
         agent_prompt = f"""你是一个专业的数学教师，请评估学生对以下数学问题的回答：
 
         问题类型: {question.type.value}
-        问题内容: {question.content}
+        问题内容: {question.content}{options_info}
         正确答案: {question.answer}
         学生回答: {user_answer.answer}
 
         请提供详细的评估和反馈。
 
         请使用中文回答，不要使用英文。
+
+        如果是选择题，请在解释中明确指出正确选项的内容，而不仅仅是选项的字母。例如，不要只说“正确答案是A”，而应该说“正确答案是A（xxx）”。
 
         输出格式必须是有效的JSON，包含以下字段：
         - is_correct: 布尔值，表示学生的回答是否正确
@@ -123,75 +133,21 @@ class FeedbackGenerator:
             output = response.get("output", "")
             print(f"\n提取的反馈输出: {output}\n")
 
-            # 寻找可能的JSON字符串
-            import re
-
-            # 直接提取完整的JSON字符串
-            # 首先尝试提取完整的JSON对象
-            full_json_match = re.search(r'`([^`]*\{[\s\S]*\}[^`]*)`', output)
+            # 尝试从输出中提取JSON
             feedback_data = None
 
-            if full_json_match:
-                # 如果找到了完整的JSON字符串，直接使用它
-                json_str = full_json_match.group(1).strip()
-                # 删除可能的反引号
-                json_str = json_str.replace('`', '')
-                # 删除可能的"json"标记
-                json_str = re.sub(r'^json\s*', '', json_str)
+            # 尝试提取JSON
+            json_str = self.extract_json_from_text(output)
 
-                print(f"\n从反馈中提取的完整JSON: {json_str}\n")
-
+            if json_str:
                 try:
-                    # 尝试解析完整的JSON
                     feedback_data = json.loads(json_str)
-                    print(f"\n成功解析完整反馈JSON: {feedback_data}\n")
+                    print(f"\n成功解析JSON: {feedback_data}\n")
                 except json.JSONDecodeError as e:
-                    print(f"\n解析完整反馈JSON失败: {e}\n")
+                    print(f"\nJSON解析失败: {e}\n")
+                    feedback_data = None
 
-            # 如果无法提取完整的JSON，尝试使用正则表达式提取
-            if not feedback_data:
-                json_patterns = [
-                    r'```+json\s*\n(.+?)\n\s*```+',  # Markdown代码块格式
-                    r'````json\s*\n(.+?)\n\s*````',  # 四个反引号
-                    r'`(.+?)`',  # 反引号内的内容
-                    r'\{\s*"is_correct":[\s\S]+?\}',  # 直接匹配包含is_correct字段的JSON对象
-                    r'\{[\s\S]+?\}'  # 匹配任何JSON对象
-                ]
-
-                for pattern in json_patterns:
-                    json_match = re.search(pattern, output, re.DOTALL)
-                    if json_match:
-                        # 处理不同的正则表达式匹配结果
-                        if len(json_match.groups()) > 0:
-                            # 如果有捕获组，使用第一个捕获组
-                            json_str = json_match.group(1).strip()
-                        else:
-                            # 否则使用整个匹配
-                            json_str = json_match.group(0).strip()
-
-                        print(f"\n找到的反馈JSON字符串: {json_str}\n")
-                        try:
-                            feedback_data = json.loads(json_str)
-                            print(f"\n成功解析反馈JSON: {feedback_data}\n")
-                            break
-                        except json.JSONDecodeError as je:
-                            print(f"\n反馈JSON解析错误: {je}\n")
-
-                            # 尝试修复JSON字符串并重新解析
-                            try:
-                                # 尝试删除可能的干扰字符
-                                cleaned_str = re.sub(r'[\n\r\t]', '', json_str)
-                                # 尝试修复常见的JSON错误
-                                cleaned_str = cleaned_str.replace("'", '"')
-                                # 尝试解析清理后的字符串
-                                feedback_data = json.loads(cleaned_str)
-                                print(f"\n成功解析清理后的反馈JSON: {feedback_data}\n")
-                                break
-                            except Exception as clean_e:
-                                print(f"\n清理后的反馈JSON解析仍然失败: {clean_e}\n")
-                                continue
-
-            # 如果仍然没有找到JSON，尝试使用更宽松的方法
+            # 如果仍然无法解析JSON，创建默认反馈数据
             if not feedback_data:
                 # 尝试在文本中寻找大括号对
                 start_idx = output.find('{')
@@ -289,3 +245,74 @@ class FeedbackGenerator:
                 user_answer=user_answer.answer,
                 improvement_suggestions=feedback_data.get("improvement_suggestions", "")
             )
+
+    def extract_json_from_text(self, text):
+        """从文本中提取JSON
+
+        Args:
+            text (str): 包含JSON的文本
+
+        Returns:
+            str: 提取的JSON字符串，如果没有找到则返回None
+        """
+        # 尝试提取被反引号包围的JSON
+        patterns = [
+            r'```+json\s*\n(.+?)\n\s*```+',  # Markdown代码块格式
+            r'````json\s*\n(.+?)\n\s*````',  # 四个反引号
+            r'`+([^`]*\{[\s\S]*?\}[^`]*)`+',  # 反引号内的JSON
+            r'\{\s*"is_correct":[^}]+\}',  # 直接匹配包含is_correct字段的JSON对象
+            r'\{[\s\S]+?\}'  # 匹配任何JSON对象
+        ]
+
+        # 首先尝试删除所有反引号
+        clean_text = re.sub(r'`+', '', text)
+
+        # 尝试每个模式
+        for pattern in patterns:
+            matches = re.findall(pattern, text, re.DOTALL)
+            if matches:
+                for match in matches:
+                    # 如果匹配是元组，使用第一个元素
+                    if isinstance(match, tuple):
+                        match = match[0]
+
+                    # 清理匹配的字符串
+                    clean_match = match.strip()
+                    clean_match = re.sub(r'^json\s*', '', clean_match)
+
+                    # 尝试解析JSON
+                    try:
+                        json.loads(clean_match)
+                        return clean_match
+                    except json.JSONDecodeError:
+                        # 尝试进一步清理
+                        clean_match = re.sub(r'[\n\r\t]', '', clean_match)
+                        clean_match = clean_match.replace("'", '"')
+
+                        try:
+                            json.loads(clean_match)
+                            return clean_match
+                        except json.JSONDecodeError:
+                            continue
+
+        # 如果上面的方法都失败了，尝试直接在文本中查找JSON对象
+        try:
+            # 尝试找到第一个左大括号和最后一个右大括号
+            start = text.find('{')
+            end = text.rfind('}')
+
+            if start != -1 and end != -1 and start < end:
+                json_str = text[start:end+1]
+
+                # 清理JSON字符串
+                json_str = re.sub(r'[\n\r\t]', '', json_str)
+                json_str = json_str.replace("'", '"')
+
+                # 尝试解析JSON
+                json.loads(json_str)
+                return json_str
+        except:
+            pass
+
+        # 如果所有方法都失败，返回None
+        return None
