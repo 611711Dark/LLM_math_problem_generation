@@ -12,7 +12,7 @@ class Settings(BaseSettings):
 
     # API 设置
     OPENAI_API_BASE: str = "https://api.deepseek.com"
-    OPENAI_API_KEY: str = "sk-ef8b09319fb64de08dec8de98aac61a6"
+    OPENAI_API_KEY: str = "<deepseek-apikey>"
 
     # LLM 模型名称
     LLM_MODEL_NAME: str = "deepseek-chat"
