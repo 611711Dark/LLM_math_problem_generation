@@ -430,9 +430,9 @@ class QuestionGenerator:
     def __init__(self):
         """初始化问题生成器"""
         self.llm = ChatOpenAI(
-            openai_api_base=settings.OPENAI_API_BASE,
-            openai_api_key=settings.OPENAI_API_KEY,
-            model_name=settings.LLM_MODEL_NAME,
+            api_key=settings.deepseek_api_key,
+            base_url=settings.deepseek_api_base,
+            model=settings.deepseek_model,
             temperature=0.7
         )
 

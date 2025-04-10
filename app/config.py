@@ -12,7 +12,12 @@ class Settings(BaseSettings):
 
     # API 设置
     OPENAI_API_BASE: str = "https://api.deepseek.com"
-    OPENAI_API_KEY: str = "<deepseek_apikey>"
+    OPENAI_API_KEY: str = os.environ.get("DEEPSEEK_API_KEY", "<deepseek_apikey>")
+
+    # 兼容性属性
+    deepseek_api_base: str = "https://api.deepseek.com"
+    deepseek_api_key: str = os.environ.get("DEEPSEEK_API_KEY", "<deepseek_apikey>")
+    deepseek_model: str = "deepseek-chat"
 
     # LLM 模型名称
     LLM_MODEL_NAME: str = "deepseek-chat"
