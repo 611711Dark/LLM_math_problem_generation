@@ -284,45 +284,39 @@ async def create_question(request: QuestionRequest):
             import re
             import json
 
-            # 尝试从错误信息中提取JSON
-            # 先尝试提取第一个完整的JSON对象
-            json_patterns = [
-                r'`([^`]*\{[\s\S]*?\}[^`]*)`',  # 反引号内的JSON
-                r'```+json\s*\n(.+?)\n\s*```+',  # Markdown代码块格式
-                r'````json\s*\n(.+?)\n\s*````',  # 四个反引号
-                r'\{\s*"content":[\s\S]+?\}',  # 直接匹配包含content字段的JSON对象
-                r'\{[\s\S]+?\}'  # 匹配任何JSON对象
-            ]
+            # 直接从错误信息中提取JSON字符串
+            # 匹配第一个大括号到最后一个大括号
+            start_idx = error_str.find('{')
+            end_idx = error_str.rfind('}')
 
             json_str = None
-            for pattern in json_patterns:
-                match = re.search(pattern, error_str)
-                if match:
-                    if len(match.groups()) > 0:
-                        # 如果有捕获组，使用第一个捕获组
-                        json_str = match.group(1).strip()
-                    else:
-                        # 否则使用整个匹配
-                        json_str = match.group(0).strip()
+            if start_idx != -1 and end_idx != -1 and start_idx < end_idx:
+                # 提取大括号之间的内容
+                json_str = error_str[start_idx:end_idx+1]
 
-                    # 如果找到了完整的JSON字符串，处理它
-                    # 删除可能的反引号
-                    json_str = json_str.replace('`', '')
-                    # 删除可能的"json"标记
-                    json_str = re.sub(r'^json\s*', '', json_str)
-                    # 删除可能的注释和其他非JSON内容
-                    json_str = re.sub(r'\n\s*\(.+?\)\s*\n', '\n', json_str)
+                # 删除可能的注释和其他非JSON内容
+                json_str = re.sub(r'\n\s*\(.+?\)\s*\n', '\n', json_str)
 
-                    # 尝试找到第一个有效的JSON对象
+                # 尝试解析JSON
+                try:
+                    json.loads(json_str)
+                    print(f"\n从错误信息中提取的完整JSON: {json_str}\n")
+                except json.JSONDecodeError:
+                    # 如果解析失败，尝试清理JSON字符串
                     try:
-                        # 尝试解析JSON
-                        json.loads(json_str)
-                        # 如果成功，跳出循环
-                        break
+                        # 删除可能的反引号
+                        cleaned_str = json_str.replace('`', '')
+                        # 删除可能的注释和其他非JSON内容
+                        cleaned_str = re.sub(r'\n\s*\(.+?\)\s*\n', '\n', cleaned_str)
+                        # 删除可能的注释和其他非JSON内容
+                        cleaned_str = re.sub(r'\n\s*注：.+', '', cleaned_str)
+
+                        # 尝试解析清理后的JSON
+                        json.loads(cleaned_str)
+                        json_str = cleaned_str
+                        print(f"\n清理后的JSON: {json_str}\n")
                     except json.JSONDecodeError:
-                        # 如果解析失败，继续尝试下一个模式
                         json_str = None
-                        continue
 
             # 如果找到了有效的JSON字符串
             if json_str:
@@ -343,7 +337,7 @@ async def create_question(request: QuestionRequest):
                     print(f"\n成功解析完整JSON: {extracted_data}\n")
 
                     # 如果成功解析了JSON，直接使用它来创建问题
-                    if extracted_data and isinstance(extracted_data, dict):
+                    if extracted_data and isinstance(extracted_data, dict) and "content" in extracted_data:
                         print("\n使用提取的完整JSON数据创建问题\n")
 
                         # 提取必要的字段

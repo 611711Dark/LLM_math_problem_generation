@@ -440,22 +440,25 @@ class QuestionGenerator:
         self.calculate_tool = StructuredTool.from_function(
             name="calculate_expression",
             func=calculate_expression,
-            description="""计算数学表达式，使用 `sympy` 中的 `sympify` 函数实现,解析并计算输入的数学表达式字符串,支持直接调用SymPy函数（自动识别x,y,z为符号变量）
+            description="""计算复杂数学表达式，仅在需要计算复杂数学表达式时使用。对于简单的计算（如基本的加减乘除、简单的乘方等），请直接计算而不要使用此工具。
+
+仅在以下情况使用此工具：
+1. 需要计算导数、积分、极限等高级运算
+2. 需要解方程或方程组
+3. 需要因式分解、展开或化简复杂表达式
+4. 需要计算矩阵运算
+5. 需要求解复杂的泰勒展开或级数
 
 参数:
-    expression (str): 数学表达式，例如 "223 - 344 * 6" 或 "sin(pi/2) + log(10)"。
+    expression (str): 数学表达式，例如 "diff(sin(x), x)" 或 "solve(x**2 - 4, x)"。
 示例表达式：
-    "2 + 3*5"                          # 基础算术 → 17
     "expand((x + 1)**2)"               # 展开 → x² + 2x + 1
     "diff(sin(x), x)"                  # 导数 → cos(x)
     "integrate(exp(x), (x, 0, 1))"      # 定积分 → E - 1
     "solve(x**2 - 4, x)"               # 解方程 → [-2, 2]
     "limit(tan(x)/x, x, 0)"            # 极限 → 1
-    "Sum(k, (k, 1, 10)).doit()"        # 求和 → 55
     "Matrix([[1, 2], [3, 4]]).inv()"   # 矩阵逆 → [[-2, 1], [3/2, -1/2]]
-    "simplify((x**2 - 1)/(x + 1))"     # 化简 → x - 1
     "factor(x**2 - 2*x - 15)"          # 因式分解 → (x - 5)(x + 3)
-    "series(cos(x), x, 0, 4)"          # 泰勒展开 → 1 - x²/2 + x⁴/24 + O(x⁴)
 返回:
     str: 计算结果。如果表达式无法解析或计算失败，返回错误信息（str）。"""
         )
@@ -487,7 +490,9 @@ class QuestionGenerator:
             tools=self.math_tools,
             llm=self.llm,
             agent="zero-shot-react-description",  # 使用支持多工具的 Agent
-            verbose=True
+            verbose=True,
+            handle_parsing_errors=True,  # 处理解析错误
+            max_iterations=3  # 限制最大迭代次数
         )
 
         # 创建问题生成提示模板
@@ -620,6 +625,8 @@ class QuestionGenerator:
         如果需要计算，请使用数学工具来计算答案。在使用计算工具时，请仔细检查输入格式，确保输入的表达式是正确的。
         输出必须是有效的JSON格式。
         再次强调，请使用中文生成所有内容。
+
+        非常重要：请在问题和解析中使用LaTeX格式的数学公式，使用$...$或$$...$$包围数学公式。例如，使用$f(x) = x^2$表示函数f(x) = x的平方，使用$\\frac{{1}}{{2}}$表示分数。请确保所有的数学公式都使用正确的LaTeX语法。
         """.format(
             domain=domain.value,
             difficulty=difficulty.value,
@@ -627,43 +634,28 @@ class QuestionGenerator:
             seed=random_seed
         )
 
-        # 调用代理
-        response = await self.agent.ainvoke({"input": agent_prompt})
+        # 直接调用LLM而不是代理
+        llm_prompt = agent_prompt  # 使用相同的提示
+        response = await self.llm.ainvoke(llm_prompt)
 
-        # 从代理响应中提取JSON
+        # 从响应中提取JSON
         question_data = None
         try:
-            # 打印完整的代理响应以进行调试
-            print(f"\n\n代理响应: {response}\n\n")
+            # 打印完整的LLM响应以进行调试
+            print(f"\n\nLLM响应: {response.content}\n\n")
 
-            # 尝试从代理输出中提取JSON
-            output = response.get("output", "")
+            # 尝试从输出中提取JSON
+            output = response.content
             print(f"\n提取的输出: {output}\n")
 
-            # 寻找可能的JSON字符串
-            import re
-            # 尝试不同的正则表达式来提取JSON
-            json_patterns = [
-                r'\{[^\{\}]*\{[^\{\}]*\}[^\{\}]*\}',  # 嵌套的JSON
-                r'\{[^\{\}]*\}',  # 简单的JSON
-                r'\{.*\}'  # 贪婪匹配
-            ]
-
-            for pattern in json_patterns:
-                json_match = re.search(pattern, output, re.DOTALL)
-                if json_match:
-                    json_str = json_match.group(0)
-                    print(f"\n找到的JSON字符串: {json_str}\n")
-                    try:
-                        question_data = json.loads(json_str)
-                        print(f"\n成功解析JSON: {question_data}\n")
-                        break
-                    except json.JSONDecodeError as je:
-                        print(f"\nJSON解析错误: {je}\n")
-                        continue
-
-            # 如果仍然没有找到JSON，尝试使用更宽松的方法
-            if not question_data:
+            # 尝试直接解析JSON
+            question_data = None
+            try:
+                question_data = json.loads(output)
+                print(f"\n成功直接解析JSON: {question_data}\n")
+                return self.create_question_from_data(question_type, question_data)
+            except json.JSONDecodeError:
+                # 如果直接解析失败，尝试提取JSON
                 # 尝试在文本中寻找大括号对
                 start_idx = output.find('{')
                 if start_idx != -1:
@@ -681,10 +673,33 @@ class QuestionGenerator:
                                 try:
                                     question_data = json.loads(json_str)
                                     print(f"\n成功解析手动提取的JSON: {question_data}\n")
-                                    break
+                                    return self.create_question_from_data(question_type, question_data)
                                 except json.JSONDecodeError as je:
                                     print(f"\n手动提取的JSON解析错误: {je}\n")
                                 break
+
+                # 如果仍然没有找到JSON，尝试使用正则表达式
+                import re
+                # 尝试不同的正则表达式来提取JSON
+                json_patterns = [
+                    r'\{[^\{\}]*\{[^\{\}]*\}[^\{\}]*\}',  # 嵌套的JSON
+                    r'\{[^\{\}]*\}',  # 简单的JSON
+                    r'\{.*\}'  # 贪婪匹配
+                ]
+
+                for pattern in json_patterns:
+                    json_match = re.search(pattern, output, re.DOTALL)
+                    if json_match:
+                        json_str = json_match.group(0)
+                        print(f"\n找到的JSON字符串: {json_str}\n")
+                        try:
+                            question_data = json.loads(json_str)
+                            print(f"\n成功解析JSON: {question_data}\n")
+                            if "content" in question_data and "answer" in question_data:
+                                return self.create_question_from_data(question_type, question_data)
+                        except json.JSONDecodeError as je:
+                            print(f"\nJSON解析错误: {je}\n")
+                            continue
         except Exception as e:
             print(f"从代理响应中提取JSON时出错: {e}")
 

@@ -36,7 +36,7 @@ class FeedbackGenerator:
         self.calculate_tool = StructuredTool.from_function(
             name="calculate_expression",
             func=calculate_expression,
-            description="""计算数学表达式，使用 `sympy` 中的 `sympify` 函数实现,解析并计算输入的数学表达式字符串,支持直接调用SymPy函数（自动识别x,y,z为符号变量）"""
+            description="""计算复杂数学表达式，仅在需要计算复杂数学表达式时使用。对于简单的计算（如基本的加减乘除、简单的乘方等），请直接计算而不要使用此工具。仅在需要计算导数、积分、极限、解方程等复杂运算时使用。"""
         )
 
         # 创建验证工具
@@ -54,7 +54,9 @@ class FeedbackGenerator:
             tools=self.math_tools,
             llm=self.llm,
             agent="zero-shot-react-description",  # 使用支持多工具的 Agent
-            verbose=True
+            verbose=True,
+            handle_parsing_errors=True,  # 处理解析错误
+            max_iterations=3  # 限制最大迭代次数
         )
 
         # 创建反馈生成提示模板
@@ -116,71 +118,84 @@ class FeedbackGenerator:
 
         如果是选择题，请在解释中明确指出正确选项的内容，而不仅仅是选项的字母。例如，不要只说“正确答案是A”，而应该说“正确答案是A（xxx）”。
 
-        输出格式必须是有效的JSON，包含以下字段：
-        - is_correct: 布尔值，表示学生的回答是否正确
-        - explanation: 详细解释为什么答案是正确或错误的（使用中文）
-        - improvement_suggestions: 如果答案错误，提供改进建议（使用中文）
+        请按照以下结构进行回答，但不要使用JSON格式：
+
+        1. 首先指出学生的回答是否正确（正确或错误）
+        2. 然后详细解释为什么答案是正确或错误的
+        3. 如果答案错误，提供改进建议
+
+        请确保你的回答包含这三个部分，并且每个部分都有清晰的标记，例如“答案评估：”、“解释：”、“改进建议：”。
+
+        请在解释和改进建议中使用LaTeX格式的数学公式，使用$...$或$$...$$包围数学公式。例如，使用$f(x) = x^2$表示函数f(x) = x的平方，使用$\\frac{{1}}{{2}}$表示分数。请确保所有的数学公式都使用正确的LaTeX语法。
         """
 
         try:
-            # 调用代理
-            response = await self.agent.ainvoke({"input": agent_prompt})
+            # 直接调用LLM而不是代理
+            response = await self.llm.ainvoke(agent_prompt)
 
-            # 打印完整的代理响应以进行调试
-            print(f"\n\n反馈代理响应: {response}\n\n")
+            # 打印完整的LLM响应以进行调试
+            print(f"\n\n反馈LLM响应: {response.content}\n\n")
 
-            # 从代理响应中提取JSON
-            output = response.get("output", "")
-            print(f"\n提取的反馈输出: {output}\n")
+            # 从响应中提取文本
+            output = response.content
+            print(f"\n反馈输出: {output}\n")
 
-            # 尝试从输出中提取JSON
-            feedback_data = None
+            # 分析文本中的关键信息
+            is_correct = False
+            explanation = ""
+            improvement_suggestions = ""
 
-            # 尝试提取JSON
-            json_str = self.extract_json_from_text(output)
+            # 检查学生答案是否正确
+            if "正确" in output[:100] and "错误" not in output[:100]:
+                is_correct = True
+            elif user_answer.answer.strip().lower() == question.answer.strip().lower():
+                is_correct = True
 
-            if json_str:
-                try:
-                    feedback_data = json.loads(json_str)
-                    print(f"\n成功解析JSON: {feedback_data}\n")
-                except json.JSONDecodeError as e:
-                    print(f"\nJSON解析失败: {e}\n")
-                    feedback_data = None
+            # 提取解释部分
+            explanation_start = output.find("解释：")
+            if explanation_start == -1:
+                explanation_start = output.find("解释:")
+            if explanation_start == -1:
+                explanation_start = output.find("解释")
 
-            # 如果仍然无法解析JSON，创建默认反馈数据
-            if not feedback_data:
-                # 尝试在文本中寻找大括号对
-                start_idx = output.find('{')
-                if start_idx != -1:
-                    # 找到开始大括号，现在寻找匹配的结束大括号
-                    brace_count = 1
-                    for i in range(start_idx + 1, len(output)):
-                        if output[i] == '{':
-                            brace_count += 1
-                        elif output[i] == '}':
-                            brace_count -= 1
-                            if brace_count == 0:
-                                # 找到匹配的结束大括号
-                                json_str = output[start_idx:i+1]
-                                print(f"\n手动提取的反馈JSON字符串: {json_str}\n")
-                                try:
-                                    feedback_data = json.loads(json_str)
-                                    print(f"\n成功解析手动提取的反馈JSON: {feedback_data}\n")
-                                    break
-                                except json.JSONDecodeError as je:
-                                    print(f"\n手动提取的反馈JSON解析错误: {je}\n")
-                                break
+            if explanation_start != -1:
+                explanation_end = output.find("改进建议", explanation_start)
+                if explanation_end == -1:
+                    explanation = output[explanation_start:].strip()
+                else:
+                    explanation = output[explanation_start:explanation_end].strip()
+            else:
+                # 如果没有找到解释标记，尝试提取中间部分
+                lines = output.split('\n')
+                if len(lines) > 2:
+                    explanation = '\n'.join(lines[1:-1])
+                else:
+                    explanation = output
 
-            # 如果没有找到JSON，回退到原始方法
-            if not feedback_data:
-                print("\n反馈代理方法失败，回退到原始方法\n")
-                response = await self.llm.ainvoke(prompt)
-                print(f"\n反馈LLM响应: {response.content}\n")
-                feedback_data = json.loads(response.content)
-                print(f"\n成功解析反馈LLM响应: {feedback_data}\n")
+            # 提取改进建议部分
+            improvement_start = output.find("改进建议：")
+            if improvement_start == -1:
+                improvement_start = output.find("改进建议:")
+            if improvement_start == -1:
+                improvement_start = output.find("改进建议")
 
-            # 如果所有方法都失败，创建一个默认的反馈数据
-            if not feedback_data:
+            if improvement_start != -1:
+                improvement_suggestions = output[improvement_start:].strip()
+            elif not is_correct:
+                # 如果答案错误但没有找到改进建议，使用最后一部分
+                lines = output.split('\n')
+                if len(lines) > 2:
+                    improvement_suggestions = lines[-1]
+
+            # 创建反馈数据
+            feedback_data = {
+                "is_correct": is_correct,
+                "explanation": explanation,
+                "improvement_suggestions": improvement_suggestions
+            }
+
+            # 如果提取失败，使用默认值
+            if not explanation:
                 print("\n创建默认反馈数据\n")
                 # 简单比较答案是否相同
                 is_correct = user_answer.answer.strip().lower() == question.answer.strip().lower()
@@ -246,73 +261,3 @@ class FeedbackGenerator:
                 improvement_suggestions=feedback_data.get("improvement_suggestions", "")
             )
 
-    def extract_json_from_text(self, text):
-        """从文本中提取JSON
-
-        Args:
-            text (str): 包含JSON的文本
-
-        Returns:
-            str: 提取的JSON字符串，如果没有找到则返回None
-        """
-        # 尝试提取被反引号包围的JSON
-        patterns = [
-            r'```+json\s*\n(.+?)\n\s*```+',  # Markdown代码块格式
-            r'````json\s*\n(.+?)\n\s*````',  # 四个反引号
-            r'`+([^`]*\{[\s\S]*?\}[^`]*)`+',  # 反引号内的JSON
-            r'\{\s*"is_correct":[^}]+\}',  # 直接匹配包含is_correct字段的JSON对象
-            r'\{[\s\S]+?\}'  # 匹配任何JSON对象
-        ]
-
-        # 首先尝试删除所有反引号
-        clean_text = re.sub(r'`+', '', text)
-
-        # 尝试每个模式
-        for pattern in patterns:
-            matches = re.findall(pattern, text, re.DOTALL)
-            if matches:
-                for match in matches:
-                    # 如果匹配是元组，使用第一个元素
-                    if isinstance(match, tuple):
-                        match = match[0]
-
-                    # 清理匹配的字符串
-                    clean_match = match.strip()
-                    clean_match = re.sub(r'^json\s*', '', clean_match)
-
-                    # 尝试解析JSON
-                    try:
-                        json.loads(clean_match)
-                        return clean_match
-                    except json.JSONDecodeError:
-                        # 尝试进一步清理
-                        clean_match = re.sub(r'[\n\r\t]', '', clean_match)
-                        clean_match = clean_match.replace("'", '"')
-
-                        try:
-                            json.loads(clean_match)
-                            return clean_match
-                        except json.JSONDecodeError:
-                            continue
-
-        # 如果上面的方法都失败了，尝试直接在文本中查找JSON对象
-        try:
-            # 尝试找到第一个左大括号和最后一个右大括号
-            start = text.find('{')
-            end = text.rfind('}')
-
-            if start != -1 and end != -1 and start < end:
-                json_str = text[start:end+1]
-
-                # 清理JSON字符串
-                json_str = re.sub(r'[\n\r\t]', '', json_str)
-                json_str = json_str.replace("'", '"')
-
-                # 尝试解析JSON
-                json.loads(json_str)
-                return json_str
-        except:
-            pass
-
-        # 如果所有方法都失败，返回None
-        return None
